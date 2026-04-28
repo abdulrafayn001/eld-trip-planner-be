@@ -133,6 +133,10 @@ REST_FRAMEWORK = {
 SUPABASE_JWT_SECRET = env("SUPABASE_JWT_SECRET", default="")
 OSRM_BASE_URL = env("OSRM_BASE_URL", default="https://router.project-osrm.org")
 ORS_API_KEY = env("ORS_API_KEY", default="")
+NOMINATIM_URL = env(
+    "NOMINATIM_URL",
+    default="https://nominatim.openstreetmap.org/search",
+)
 NOMINATIM_USER_AGENT = env(
     "NOMINATIM_USER_AGENT",
     default="eld-trip-planner/0.1 (contact: usama.dev0@gmail.com)",

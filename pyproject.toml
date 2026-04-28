@@ -28,3 +28,8 @@ dev = [
     "pytest-django>=4.9",
     "ruff>=0.6",
 ]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+python_files = ["test_*.py"]
+
