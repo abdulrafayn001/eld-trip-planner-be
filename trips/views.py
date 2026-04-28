@@ -12,20 +12,27 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Final
 
+from django.contrib.auth import get_user_model
 from django.db import transaction
 from rest_framework import mixins, status, viewsets
+from rest_framework.authtoken.models import Token
+from rest_framework.authtoken.views import ObtainAuthToken
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from trips.models import DailyLog, Trip, TripEvent
 from trips.serializers import (
     DailyLogSerializer,
+    RegisterSerializer,
     TripCreateSerializer,
     TripEventSerializer,
     TripSerializer,
 )
+
+User = get_user_model()
 from trips.services import log_builder, planner
 from trips.services.geocoding import GeocodingError, geocode
 from trips.services.routing import RouteLeg, RoutingError, route
@@ -55,9 +62,14 @@ class TripViewSet(
 
     def get_queryset(self):
         qs = super().get_queryset()
-        user_id = self.request.query_params.get("user_id")
-        if user_id:
-            qs = qs.filter(user_id=user_id)
+        if self.action == "list":
+            # Listing returns only the requesting user's trips (anonymous list
+            # is empty). Retrieve-by-UUID stays open so a freshly-created
+            # anonymous trip can still be fetched by id.
+            user = self.request.user
+            if user.is_authenticated:
+                return qs.filter(user=user)
+            return qs.none()
         return qs
 
     def create(self, request: Request, *args, **kwargs) -> Response:
@@ -107,7 +119,7 @@ class TripViewSet(
         )
 
         trip = self._persist(
-            user_id=getattr(request, "user_id", None),
+            user=request.user if request.user.is_authenticated else None,
             current=current,
             pickup=pickup,
             dropoff=dropoff,
@@ -149,7 +161,7 @@ class TripViewSet(
     @transaction.atomic
     def _persist(
         *,
-        user_id,
+        user,
         current: tuple[float, float, str],
         pickup: tuple[float, float, str],
         dropoff: tuple[float, float, str],
@@ -163,7 +175,7 @@ class TripViewSet(
         logs: list[DailyLog],
     ) -> Trip:
         trip = Trip.objects.create(
-            user_id=user_id,
+            user=user,
             current_location=current[2],
             current_lat=current[0],
             current_lng=current[1],
@@ -187,6 +199,41 @@ class TripViewSet(
             log.trip = trip
         DailyLog.objects.bulk_create(logs)
         return trip
+
+
+class RegisterView(APIView):
+    """``POST /api/auth/register/`` — create a user and return an auth token."""
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def post(self, request: Request) -> Response:
+        serializer = RegisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response(
+            {"token": token.key, "user_id": user.pk, "username": user.username},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class LoginView(ObtainAuthToken):
+    """``POST /api/auth/login/`` — return the user's auth token.
+
+    Wraps DRF's :class:`ObtainAuthToken` to also return ``user_id`` and
+    ``username`` so the frontend doesn't need a second round-trip.
+    """
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        serializer = self.serializer_class(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        user = serializer.validated_data["user"]
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response({"token": token.key, "user_id": user.pk, "username": user.username})
 
 
 def _combine_geometries(leg_a: RouteLeg, leg_b: RouteLeg) -> dict:

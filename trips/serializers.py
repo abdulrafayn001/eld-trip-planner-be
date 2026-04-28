@@ -11,9 +11,13 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
 from trips.models import DailyLog, Trip, TripEvent
+
+User = get_user_model()
 
 CYCLE_HOURS_MAX = 70.0
 
@@ -74,7 +78,7 @@ class TripSerializer(serializers.ModelSerializer):
         model = Trip
         fields = (
             "id",
-            "user_id",
+            "user",
             "current_location",
             "current_lat",
             "current_lng",
@@ -95,3 +99,27 @@ class TripSerializer(serializers.ModelSerializer):
             "logs",
         )
         read_only_fields = fields
+
+
+class RegisterSerializer(serializers.Serializer):
+    """Validates new-user input for ``POST /api/auth/register/``."""
+
+    username = serializers.CharField(max_length=150)
+    email = serializers.EmailField(required=False, allow_blank=True)
+    password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate_username(self, value: str) -> str:
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError("username already taken")
+        return value
+
+    def validate_password(self, value: str) -> str:
+        validate_password(value)
+        return value
+
+    def create(self, validated_data: dict) -> "User":
+        return User.objects.create_user(
+            username=validated_data["username"],
+            email=validated_data.get("email", "") or "",
+            password=validated_data["password"],
+        )

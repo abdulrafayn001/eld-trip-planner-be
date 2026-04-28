@@ -43,7 +43,6 @@ non-default deployment:
 | `ALLOWED_HOSTS` | Comma-separated hostnames |
 | `DATABASE_URL` | Postgres connection string |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated frontend origins |
-| `SUPABASE_JWT_SECRET` | HS256 secret for verifying Supabase JWTs |
 | `OSRM_BASE_URL` | OSRM routing host (default public demo server) |
 | `ORS_API_KEY` | OpenRouteService API key (fallback routing) |
 | `NOMINATIM_USER_AGENT` | Required by Nominatim TOS |

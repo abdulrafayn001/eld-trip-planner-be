@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "corsheaders",
     "rest_framework",
+    "rest_framework.authtoken",
     "django_filters",
     "trips",
 ]
@@ -119,7 +120,12 @@ CORS_ALLOW_CREDENTIALS = True
 # Django REST Framework -------------------------------------------------------
 
 REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": [],
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.TokenAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    # AllowAny keeps anonymous trips supported (spec §7.4); per-action
+    # endpoints can tighten this with their own permission_classes.
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
     "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
@@ -130,7 +136,6 @@ REST_FRAMEWORK = {
 
 # Third-party services --------------------------------------------------------
 
-SUPABASE_JWT_SECRET = env("SUPABASE_JWT_SECRET", default="")
 OSRM_BASE_URL = env("OSRM_BASE_URL", default="https://router.project-osrm.org")
 ORS_BASE_URL = env("ORS_BASE_URL", default="https://api.openrouteservice.org")
 ORS_API_KEY = env("ORS_API_KEY", default="")

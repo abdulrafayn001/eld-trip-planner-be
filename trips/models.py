@@ -1,5 +1,6 @@
 import uuid
 
+from django.conf import settings
 from django.db import models
 
 
@@ -13,7 +14,14 @@ DUTY_STATUS = [
 
 class Trip(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user_id = models.UUIDField(null=True, blank=True, db_index=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        related_name="trips",
+        on_delete=models.SET_NULL,
+        db_index=True,
+    )
     current_location = models.CharField(max_length=255)
     current_lat = models.FloatField()
     current_lng = models.FloatField()

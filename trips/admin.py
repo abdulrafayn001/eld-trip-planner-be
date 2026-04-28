@@ -30,7 +30,12 @@ class TripAdmin(admin.ModelAdmin):
         "created_at",
     )
     list_filter = ("requires_34h_restart", "home_timezone")
-    search_fields = ("current_location", "pickup_location", "dropoff_location", "user_id")
+    search_fields = (
+        "current_location",
+        "pickup_location",
+        "dropoff_location",
+        "user__username",
+    )
     readonly_fields = ("id", "created_at")
     inlines = (TripEventInline, DailyLogInline)
 
