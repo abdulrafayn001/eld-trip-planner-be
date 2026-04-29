@@ -59,13 +59,20 @@ with no UI tweaks beyond setting environment variables.
 
 What `railway.json` does:
 
-- **Build:** `uv sync --frozen --no-dev` then `collectstatic` (Whitenoise
-  serves the admin's static assets out of `staticfiles/`).
+- **Build:** uses the repo's [`Dockerfile`](Dockerfile) (Python 3.12-slim
+  + uv 0.5.11 pinned via `ghcr.io/astral-sh/uv`). The image runs
+  `uv sync --frozen --no-dev` and `collectstatic` so Whitenoise can serve
+  the admin's static assets out of `staticfiles/`.
 - **Start:** `migrate --noinput` then `gunicorn config.wsgi:application` on
   `$PORT` with 2 workers and access logs on stdout.
 - **Health check:** `/api/health/` (100 s timeout) — Railway only routes
   traffic once it returns `{"ok": true}`.
 - **Restart policy:** on failure, up to 10 retries.
+
+We use a Dockerfile rather than Nixpacks because Nixpacks' uv provider
+shells out `pip install uv==$NIXPACKS_UV_VERSION` and currently fails when
+that env var is unset. Pinning uv in the Dockerfile is also more
+reproducible.
 
 ### Required env vars on Railway
 
