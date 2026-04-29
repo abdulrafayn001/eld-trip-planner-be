@@ -28,20 +28,26 @@ def _leg(distance_mi: float, duration_hr: float, start, end) -> RouteLeg:
     )
 
 
-def _geocode_side_effect(query: str):
-    q = query.lower()
-    if "los angeles" in q:
-        return LA
-    if "dallas" in q:
-        return DALLAS
-    if "atlanta" in q:
-        return ATLANTA
-    raise AssertionError(f"unexpected geocode call: {query!r}")
+def _location(point):
+    """Build the structured location payload the API now accepts."""
+    return {"label": point[2], "lat": point[0], "lng": point[1]}
+
+
+TRIP_PAYLOAD = {
+    "current": _location(LA),
+    "pickup": _location(DALLAS),
+    "dropoff": _location(ATLANTA),
+    "cycle_used_hrs": "20.0",
+}
 
 
 @pytest.fixture
 def planner_stubs():
-    """Mock geocoding + routing so the API test never hits the network."""
+    """Mock routing so the API test never hits the network.
+
+    Geocoding is no longer invoked from the trip-create view — the
+    frontend ships pre-resolved lat/lng — so only ``route`` is patched.
+    """
 
     def _route_side_effect(from_coord, to_coord):
         if from_coord == (LA[0], LA[1]) and to_coord == (DALLAS[0], DALLAS[1]):
@@ -50,11 +56,8 @@ def planner_stubs():
             return _leg(800, 13.0, DALLAS, ATLANTA)
         raise AssertionError(f"unexpected route call: {from_coord} → {to_coord}")
 
-    with (
-        patch("trips.views.geocode", side_effect=_geocode_side_effect) as mock_geocode,
-        patch("trips.views.route", side_effect=_route_side_effect) as mock_route,
-    ):
-        yield mock_geocode, mock_route
+    with patch("trips.views.route", side_effect=_route_side_effect) as mock_route:
+        yield mock_route
 
 
 # ---------------------------------------------------------------------------
@@ -63,15 +66,7 @@ def planner_stubs():
 @pytest.mark.django_db
 def test_post_trips_returns_201_and_uuid(planner_stubs):
     client = APIClient()
-    response = client.post(
-        "/api/trips/",
-        data={
-            "current": "Los Angeles, CA",
-            "pickup": "Dallas, TX",
-            "dropoff": "Atlanta, GA",
-            "cycle_used_hrs": "20.0",
-        },
-    )
+    response = client.post("/api/trips/", data=TRIP_PAYLOAD, format="json")
 
     assert response.status_code == 201
     assert "id" in response.data
@@ -82,6 +77,31 @@ def test_post_trips_returns_201_and_uuid(planner_stubs):
     assert Trip.objects.filter(id=trip_id).exists()
 
 
+@pytest.mark.django_db
+def test_post_trips_rejects_unstructured_location():
+    """A bare string for ``current`` is no longer a valid payload."""
+    client = APIClient()
+    response = client.post(
+        "/api/trips/",
+        data={**TRIP_PAYLOAD, "current": "Los Angeles, CA"},
+        format="json",
+    )
+    assert response.status_code == 400
+    assert "current" in response.data
+
+
+@pytest.mark.django_db
+def test_post_trips_rejects_out_of_range_latitude(planner_stubs):
+    client = APIClient()
+    response = client.post(
+        "/api/trips/",
+        data={**TRIP_PAYLOAD, "current": {"label": "x", "lat": 200.0, "lng": 0.0}},
+        format="json",
+    )
+    assert response.status_code == 400
+    assert "current" in response.data
+
+
 # ---------------------------------------------------------------------------
 # Spec §7.5 — GET /trips/{id}/logs/ returns N entries where each totals 24h
 # (and N matches the wall-clock day span of the planned events).
@@ -89,15 +109,7 @@ def test_post_trips_returns_201_and_uuid(planner_stubs):
 @pytest.mark.django_db
 def test_get_trip_logs_returns_24h_entries_per_day(planner_stubs):
     client = APIClient()
-    create = client.post(
-        "/api/trips/",
-        data={
-            "current": "Los Angeles, CA",
-            "pickup": "Dallas, TX",
-            "dropoff": "Atlanta, GA",
-            "cycle_used_hrs": "20.0",
-        },
-    )
+    create = client.post("/api/trips/", data=TRIP_PAYLOAD, format="json")
     trip_id = create.data["id"]
 
     response = client.get(f"/api/trips/{trip_id}/logs/")
@@ -125,12 +137,8 @@ def test_post_trips_rejects_invalid_cycle_used_hrs(bad_value, planner_stubs):
     client = APIClient()
     response = client.post(
         "/api/trips/",
-        data={
-            "current": "Los Angeles, CA",
-            "pickup": "Dallas, TX",
-            "dropoff": "Atlanta, GA",
-            "cycle_used_hrs": bad_value,
-        },
+        data={**TRIP_PAYLOAD, "cycle_used_hrs": bad_value},
+        format="json",
     )
     assert response.status_code == 400
     assert "cycle_used_hrs" in response.data
@@ -142,15 +150,7 @@ def test_post_trips_rejects_invalid_cycle_used_hrs(bad_value, planner_stubs):
 @pytest.mark.django_db
 def test_get_trip_detail_includes_events_and_logs(planner_stubs):
     client = APIClient()
-    create = client.post(
-        "/api/trips/",
-        data={
-            "current": "Los Angeles, CA",
-            "pickup": "Dallas, TX",
-            "dropoff": "Atlanta, GA",
-            "cycle_used_hrs": "20.0",
-        },
-    )
+    create = client.post("/api/trips/", data=TRIP_PAYLOAD, format="json")
     trip_id = create.data["id"]
 
     response = client.get(f"/api/trips/{trip_id}/")
@@ -171,15 +171,7 @@ def test_get_trip_detail_includes_events_and_logs(planner_stubs):
 @pytest.mark.django_db
 def test_get_trip_route_returns_geometry_and_markers(planner_stubs):
     client = APIClient()
-    create = client.post(
-        "/api/trips/",
-        data={
-            "current": "Los Angeles, CA",
-            "pickup": "Dallas, TX",
-            "dropoff": "Atlanta, GA",
-            "cycle_used_hrs": "20.0",
-        },
-    )
+    create = client.post("/api/trips/", data=TRIP_PAYLOAD, format="json")
     trip_id = create.data["id"]
 
     response = client.get(f"/api/trips/{trip_id}/route/")
@@ -311,3 +303,36 @@ def test_anonymous_delete_is_rejected(make_trip):
 
     assert response.status_code in (401, 403)
     assert Trip.objects.filter(id=trip.id).exists()
+
+
+# ---------------------------------------------------------------------------
+# GET /api/geocode/?q=... — autocomplete proxy.
+# Validates the wiring (URL, query parsing, response shape). The Nominatim
+# call is mocked at the service layer so the test stays offline.
+# ---------------------------------------------------------------------------
+def test_geocode_search_returns_results():
+    candidates = [
+        {"label": "Los Angeles, CA, USA", "lat": 34.05, "lng": -118.24, "place_id": "1"},
+        {"label": "Los Angeles County, CA, USA", "lat": 34.20, "lng": -118.20, "place_id": "2"},
+    ]
+    with patch("trips.views.search_locations", return_value=candidates) as mock_search:
+        response = APIClient().get("/api/geocode/", {"q": "Los Angeles", "limit": 5})
+
+    assert response.status_code == 200
+    assert response.data == {"results": candidates}
+    mock_search.assert_called_once_with("Los Angeles", limit=5)
+
+
+def test_geocode_search_requires_q():
+    response = APIClient().get("/api/geocode/")
+    assert response.status_code == 400
+    assert "q" in response.data
+
+
+def test_geocode_search_passes_through_empty_results():
+    with patch("trips.views.search_locations", return_value=[]) as mock_search:
+        response = APIClient().get("/api/geocode/", {"q": "x"})
+
+    assert response.status_code == 200
+    assert response.data == {"results": []}
+    mock_search.assert_called_once()

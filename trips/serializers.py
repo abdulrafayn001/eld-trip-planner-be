@@ -1,11 +1,12 @@
 """DRF serializers for the trips API.
 
 The input serializer (:class:`TripCreateSerializer`) validates the four
-fields from spec §3 — ``current``, ``pickup``, ``dropoff`` (free-text
-locations the geocoder will resolve) and ``cycle_used_hrs`` (0-70, one
+fields from spec §3 — ``current``, ``pickup``, ``dropoff`` (each a
+``{label, lat, lng}`` object pre-resolved by the frontend autocomplete
+against ``GET /api/geocode/``) and ``cycle_used_hrs`` (0-70, one
 decimal). Output serializers expose the persisted Trip with its events
-and per-day logs. Trip orchestration (geocode → route → plan → build
-logs → persist) lives in the view, not here.
+and per-day logs. Trip orchestration (route → plan → build logs →
+persist) lives in the view, not here.
 """
 from __future__ import annotations
 
@@ -22,12 +23,20 @@ User = get_user_model()
 CYCLE_HOURS_MAX = 70.0
 
 
+class LocationSerializer(serializers.Serializer):
+    """A picked location from the autocomplete: label + coordinates."""
+
+    label = serializers.CharField(max_length=255)
+    lat = serializers.FloatField(min_value=-90.0, max_value=90.0)
+    lng = serializers.FloatField(min_value=-180.0, max_value=180.0)
+
+
 class TripCreateSerializer(serializers.Serializer):
     """Validates trip-input from the frontend form (spec §3, §8.4)."""
 
-    current = serializers.CharField(max_length=255)
-    pickup = serializers.CharField(max_length=255)
-    dropoff = serializers.CharField(max_length=255)
+    current = LocationSerializer()
+    pickup = LocationSerializer()
+    dropoff = LocationSerializer()
     cycle_used_hrs = serializers.DecimalField(
         max_digits=4,
         decimal_places=1,
@@ -37,6 +46,13 @@ class TripCreateSerializer(serializers.Serializer):
     home_timezone = serializers.CharField(
         max_length=64, required=False, default="America/Chicago"
     )
+
+
+class GeocodeSearchSerializer(serializers.Serializer):
+    """Validates the ``GET /api/geocode/`` query string."""
+
+    q = serializers.CharField(max_length=255, required=True)
+    limit = serializers.IntegerField(min_value=1, max_value=8, required=False, default=5)
 
 
 class TripEventSerializer(serializers.ModelSerializer):

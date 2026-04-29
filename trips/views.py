@@ -1,17 +1,20 @@
 """Trips API views.
-- ``POST /api/trips/``       → orchestrates geocode → route → plan →
-                              build logs → persist; returns ``{"id": ...}``.
+- ``POST /api/trips/``       → orchestrates route → plan → build logs →
+                              persist using locations pre-picked by the
+                              frontend autocomplete; returns ``{"id": ...}``.
 - ``GET  /api/trips/{id}/``  → full trip with nested events and logs.
 - ``GET  /api/trips/{id}/logs/``  → array of daily-log structures for the
                                     SVG renderer.
 - ``GET  /api/trips/{id}/route/`` → ``{geometry, markers}`` for the map.
 - ``GET  /api/trips/?user_id=...`` → recent trips, optionally filtered.
+- ``GET  /api/geocode/?q=...`` → autocomplete candidates from Nominatim.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Final
 
+import httpx
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from rest_framework import mixins, status, viewsets
@@ -27,6 +30,7 @@ from rest_framework.views import APIView
 from trips.models import DailyLog, Trip, TripEvent
 from trips.serializers import (
     DailyLogSerializer,
+    GeocodeSearchSerializer,
     RegisterSerializer,
     TripCreateSerializer,
     TripEventSerializer,
@@ -35,7 +39,7 @@ from trips.serializers import (
 
 User = get_user_model()
 from trips.services import log_builder, planner
-from trips.services.geocoding import GeocodingError, geocode
+from trips.services.geocoding import search_locations
 from trips.services.routing import RouteLeg, RoutingError, route
 
 NON_DRIVING_MARKER_ACTIVITIES: Final = frozenset(
@@ -89,12 +93,12 @@ class TripViewSet(
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        try:
-            current = geocode(data["current"])
-            pickup = geocode(data["pickup"])
-            dropoff = geocode(data["dropoff"])
-        except GeocodingError as exc:
-            raise ValidationError({"detail": f"could not geocode: {exc}"}) from exc
+        # Locations arrive pre-resolved from the autocomplete picker, so the
+        # view skips geocoding entirely. Normalise to (lat, lng, label) for
+        # the rest of the pipeline.
+        current = (data["current"]["lat"], data["current"]["lng"], data["current"]["label"])
+        pickup = (data["pickup"]["lat"], data["pickup"]["lng"], data["pickup"]["label"])
+        dropoff = (data["dropoff"]["lat"], data["dropoff"]["lng"], data["dropoff"]["label"])
 
         try:
             leg_a = route((current[0], current[1]), (pickup[0], pickup[1]))
@@ -246,6 +250,35 @@ class LoginView(ObtainAuthToken):
         user = serializer.validated_data["user"]
         token, _ = Token.objects.get_or_create(user=user)
         return Response({"token": token.key, "user_id": user.pk, "username": user.username})
+
+
+class GeocodeSearchView(APIView):
+    """``GET /api/geocode/?q=...`` — proxy to Nominatim for autocomplete.
+
+    The frontend never hits Nominatim directly: this proxy enforces the
+    project's User-Agent, applies the per-process 1 req/s throttle, and
+    caches results so repeated keystrokes don't fan out to upstream. The
+    response is a flat list — caching, filtering, and ranking are
+    Nominatim's job, not the API's.
+    """
+
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def get(self, request: Request) -> Response:
+        params = GeocodeSearchSerializer(data=request.query_params)
+        params.is_valid(raise_exception=True)
+        q = params.validated_data["q"]
+        limit = params.validated_data.get("limit") or 5
+
+        try:
+            matches = search_locations(q, limit=limit)
+        except httpx.HTTPError as exc:
+            return Response(
+                {"detail": f"geocoder unavailable: {exc}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response({"results": matches})
 
 
 def _combine_geometries(leg_a: RouteLeg, leg_b: RouteLeg) -> dict:

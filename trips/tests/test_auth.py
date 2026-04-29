@@ -28,17 +28,6 @@ def _leg(distance_mi: float, duration_hr: float, start, end) -> RouteLeg:
     )
 
 
-def _geocode_side_effect(query: str):
-    q = query.lower()
-    if "los angeles" in q:
-        return LA
-    if "dallas" in q:
-        return DALLAS
-    if "atlanta" in q:
-        return ATLANTA
-    raise AssertionError(f"unexpected geocode call: {query!r}")
-
-
 def _items(payload):
     """Normalize DRF list payloads — paginated dict or bare list."""
     if isinstance(payload, dict) and "results" in payload:
@@ -56,19 +45,21 @@ def _route_side_effect(from_coord, to_coord):
 
 @pytest.fixture
 def planner_stubs():
-    with (
-        patch("trips.views.geocode", side_effect=_geocode_side_effect),
-        patch("trips.views.route", side_effect=_route_side_effect),
-    ):
+    """Mock routing only — geocoding is no longer invoked from the view."""
+    with patch("trips.views.route", side_effect=_route_side_effect):
         yield
+
+
+def _location(point):
+    return {"label": point[2], "lat": point[0], "lng": point[1]}
 
 
 @pytest.fixture
 def trip_payload() -> dict:
     return {
-        "current": "Los Angeles, CA",
-        "pickup": "Dallas, TX",
-        "dropoff": "Atlanta, GA",
+        "current": _location(LA),
+        "pickup": _location(DALLAS),
+        "dropoff": _location(ATLANTA),
         "cycle_used_hrs": "10.0",
     }
 
@@ -147,7 +138,7 @@ def test_authenticated_post_trip_stamps_user(planner_stubs, trip_payload):
 
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
-    response = client.post("/api/trips/", data=trip_payload)
+    response = client.post("/api/trips/", data=trip_payload, format="json")
 
     assert response.status_code == 201
     trip = Trip.objects.get(id=response.data["id"])
@@ -157,7 +148,7 @@ def test_authenticated_post_trip_stamps_user(planner_stubs, trip_payload):
 @pytest.mark.django_db
 def test_anonymous_post_trip_succeeds_with_null_user(planner_stubs, trip_payload):
     client = APIClient()
-    response = client.post("/api/trips/", data=trip_payload)
+    response = client.post("/api/trips/", data=trip_payload, format="json")
 
     assert response.status_code == 201
     trip = Trip.objects.get(id=response.data["id"])
@@ -178,16 +169,16 @@ def test_list_trips_returns_only_own_trips(planner_stubs, trip_payload):
     client = APIClient()
 
     client.credentials(HTTP_AUTHORIZATION=f"Token {grace_token.key}")
-    grace_create = client.post("/api/trips/", data=trip_payload)
+    grace_create = client.post("/api/trips/", data=trip_payload, format="json")
     grace_trip_id = grace_create.data["id"]
 
     client.credentials(HTTP_AUTHORIZATION=f"Token {heidi_token.key}")
-    heidi_create = client.post("/api/trips/", data=trip_payload)
+    heidi_create = client.post("/api/trips/", data=trip_payload, format="json")
     heidi_trip_id = heidi_create.data["id"]
 
     # Anonymous trip should appear in nobody's list.
     client.credentials()
-    client.post("/api/trips/", data=trip_payload)
+    client.post("/api/trips/", data=trip_payload, format="json")
 
     client.credentials(HTTP_AUTHORIZATION=f"Token {grace_token.key}")
     grace_list = client.get("/api/trips/")
@@ -203,10 +194,10 @@ def test_anonymous_list_trips_is_empty(planner_stubs, trip_payload):
     token = Token.objects.create(user=user)
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
-    client.post("/api/trips/", data=trip_payload)
+    client.post("/api/trips/", data=trip_payload, format="json")
     # Anonymous trip — also persisted, but still excluded from anon list.
     client.credentials()
-    client.post("/api/trips/", data=trip_payload)
+    client.post("/api/trips/", data=trip_payload, format="json")
 
     client.credentials()
     response = client.get("/api/trips/")
@@ -221,7 +212,7 @@ def test_anonymous_list_trips_is_empty(planner_stubs, trip_payload):
 @pytest.mark.django_db
 def test_anonymous_can_retrieve_anonymous_trip_by_id(planner_stubs, trip_payload):
     client = APIClient()
-    create = client.post("/api/trips/", data=trip_payload)
+    create = client.post("/api/trips/", data=trip_payload, format="json")
     trip_id = create.data["id"]
 
     response = client.get(f"/api/trips/{trip_id}/")

@@ -4,7 +4,12 @@ from __future__ import annotations
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from trips.views import LoginView, RegisterView, TripViewSet
+from trips.views import (
+    GeocodeSearchView,
+    LoginView,
+    RegisterView,
+    TripViewSet,
+)
 
 router = DefaultRouter()
 router.register(r"trips", TripViewSet, basename="trip")
@@ -12,5 +17,6 @@ router.register(r"trips", TripViewSet, basename="trip")
 urlpatterns = [
     path("auth/register/", RegisterView.as_view(), name="auth-register"),
     path("auth/login/", LoginView.as_view(), name="auth-login"),
+    path("geocode/", GeocodeSearchView.as_view(), name="geocode-search"),
     *router.urls,
 ]
