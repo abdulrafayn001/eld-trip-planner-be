@@ -15,17 +15,11 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY . .
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev && chmod +x ./start.sh
 
 # collectstatic only needs SECRET_KEY to import settings; DB is not touched.
 RUN DJANGO_SECRET_KEY=build-only python manage.py collectstatic --noinput
 
 EXPOSE 8000
 
-CMD python manage.py migrate --noinput && \
-    gunicorn config.wsgi:application \
-      --bind 0.0.0.0:${PORT:-8000} \
-      --workers 2 \
-      --access-logfile - \
-      --error-logfile - \
-      --log-level info
+CMD ["./start.sh"]
