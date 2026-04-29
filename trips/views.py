@@ -19,6 +19,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.authtoken.views import ObtainAuthToken
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -55,17 +56,28 @@ class TripViewSet(
     mixins.CreateModelMixin,
     mixins.RetrieveModelMixin,
     mixins.ListModelMixin,
+    mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
     queryset = Trip.objects.all().prefetch_related("events", "logs")
     serializer_class = TripSerializer
 
+    def get_permissions(self):
+        # Destroy is owner-only; require auth before object lookup so anonymous
+        # callers see 401 rather than 404. The other actions keep the global
+        # AllowAny default (anonymous create/retrieve are intentional).
+        if self.action == "destroy":
+            return [IsAuthenticated()]
+        return super().get_permissions()
+
     def get_queryset(self):
         qs = super().get_queryset()
-        if self.action == "list":
+        if self.action in ("list", "destroy"):
             # Listing returns only the requesting user's trips (anonymous list
-            # is empty). Retrieve-by-UUID stays open so a freshly-created
-            # anonymous trip can still be fetched by id.
+            # is empty). Destroy is scoped the same way so non-owners get a
+            # 404 from get_object() rather than leaking trip existence.
+            # Retrieve-by-UUID stays open so a freshly-created anonymous trip
+            # can still be fetched by id.
             user = self.request.user
             if user.is_authenticated:
                 return qs.filter(user=user)

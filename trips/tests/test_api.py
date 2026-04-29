@@ -243,3 +243,71 @@ def test_list_trips_is_paginated():
     body2 = page2.data
     assert len(body2["results"]) == 2
     assert body2["next"] is None
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/trips/{id}/ — owner-only authorization.
+# Anonymous callers are rejected before object lookup; non-owners get 404
+# (existence not leaked); the owner gets 204 and cascade removes events/logs.
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def make_trip():
+    def _make(user):
+        return Trip.objects.create(
+            user=user,
+            current_location="Origin",
+            current_lat=0.0,
+            current_lng=0.0,
+            pickup_location="Pickup",
+            pickup_lat=0.0,
+            pickup_lng=0.0,
+            dropoff_location="Dropoff",
+            dropoff_lat=0.0,
+            dropoff_lng=0.0,
+            cycle_used_hrs=10.0,
+            total_distance_mi=100.0,
+            total_duration_hr=2.0,
+            route_geometry={"type": "LineString", "coordinates": []},
+        )
+    return _make
+
+
+@pytest.mark.django_db
+def test_owner_can_delete_trip(make_trip):
+    user = User.objects.create_user(username="alice", password="longpassword123")
+    token = Token.objects.create(user=user)
+    trip = make_trip(user)
+
+    client = APIClient()
+    client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+    response = client.delete(f"/api/trips/{trip.id}/")
+
+    assert response.status_code == 204
+    assert not Trip.objects.filter(id=trip.id).exists()
+
+
+@pytest.mark.django_db
+def test_non_owner_delete_returns_404(make_trip):
+    owner = User.objects.create_user(username="alice", password="longpassword123")
+    other = User.objects.create_user(username="bob", password="longpassword123")
+    other_token = Token.objects.create(user=other)
+    trip = make_trip(owner)
+
+    client = APIClient()
+    client.credentials(HTTP_AUTHORIZATION=f"Token {other_token.key}")
+    response = client.delete(f"/api/trips/{trip.id}/")
+
+    assert response.status_code == 404
+    assert Trip.objects.filter(id=trip.id).exists()
+
+
+@pytest.mark.django_db
+def test_anonymous_delete_is_rejected(make_trip):
+    owner = User.objects.create_user(username="alice", password="longpassword123")
+    trip = make_trip(owner)
+
+    client = APIClient()
+    response = client.delete(f"/api/trips/{trip.id}/")
+
+    assert response.status_code in (401, 403)
+    assert Trip.objects.filter(id=trip.id).exists()
