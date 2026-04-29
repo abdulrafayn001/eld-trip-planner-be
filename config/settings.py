@@ -6,6 +6,7 @@ django-environ. See .env.example for the full list of supported keys.
 """
 
 from pathlib import Path
+from urllib.parse import urlparse
 
 import environ
 
@@ -127,7 +128,11 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # CORS ------------------------------------------------------------------------
 
-CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
+CORS_ALLOWED_ORIGINS = [
+    f"{parsed.scheme}://{parsed.netloc}"
+    for raw in env.list("CORS_ALLOWED_ORIGINS", default=[])
+    if (parsed := urlparse(raw)).netloc
+]
 CORS_ALLOW_CREDENTIALS = True
 
 
