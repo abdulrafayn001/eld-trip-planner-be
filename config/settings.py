@@ -31,6 +31,13 @@ RAILWAY_PUBLIC_DOMAIN = env("RAILWAY_PUBLIC_DOMAIN", default="")
 if RAILWAY_PUBLIC_DOMAIN:
     ALLOWED_HOSTS.append(RAILWAY_PUBLIC_DOMAIN)
 
+# Railway's platform healthcheck and internal proxies hit the container with
+# Host headers that aren't always RAILWAY_PUBLIC_DOMAIN (e.g. *.up.railway.app
+# or *.railway.internal). Allow any railway.app subdomain when running there.
+if env("RAILWAY_ENVIRONMENT", default=""):
+    ALLOWED_HOSTS.append(".railway.app")
+    ALLOWED_HOSTS.append(".railway.internal")
+
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 if RAILWAY_PUBLIC_DOMAIN:
     CSRF_TRUSTED_ORIGINS.append(f"https://{RAILWAY_PUBLIC_DOMAIN}")
