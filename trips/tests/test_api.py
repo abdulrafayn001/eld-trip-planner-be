@@ -3,10 +3,14 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+from django.contrib.auth import get_user_model
+from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
 from trips.models import Trip
 from trips.services.routing import RouteLeg
+
+User = get_user_model()
 
 LA = (34.0537, -118.2428, "Los Angeles, CA, USA")
 DALLAS = (32.7767, -96.7970, "Dallas, TX, USA")
@@ -192,3 +196,50 @@ def test_get_trip_route_returns_geometry_and_markers(planner_stubs):
     # Every marker has lat/lng — pure-driving events are excluded.
     for m in markers:
         assert m["lat"] is not None and m["lng"] is not None
+
+
+# ---------------------------------------------------------------------------
+# GET /api/trips/ returns LimitOffsetPagination shape with PAGE_SIZE=10.
+# Backs the frontend useInfiniteQuery hook on the trips list page.
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_list_trips_is_paginated():
+    user = User.objects.create_user(username="judy", password="longpassword123")
+    token = Token.objects.create(user=user)
+
+    # Create 12 trips directly via the ORM — bypasses the planner so the test
+    # stays fast and isolated from geocoding/routing.
+    for i in range(12):
+        Trip.objects.create(
+            user=user,
+            current_location=f"Origin {i}",
+            current_lat=0.0,
+            current_lng=0.0,
+            pickup_location=f"Pickup {i}",
+            pickup_lat=0.0,
+            pickup_lng=0.0,
+            dropoff_location=f"Dropoff {i}",
+            dropoff_lat=0.0,
+            dropoff_lng=0.0,
+            cycle_used_hrs=10.0,
+            total_distance_mi=100.0,
+            total_duration_hr=2.0,
+            route_geometry={"type": "LineString", "coordinates": []},
+        )
+
+    client = APIClient()
+    client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+
+    page1 = client.get("/api/trips/")
+    assert page1.status_code == 200
+    body1 = page1.data
+    assert body1["count"] == 12
+    assert len(body1["results"]) == 10
+    assert body1["next"] is not None
+    assert body1["previous"] is None
+
+    page2 = client.get("/api/trips/?limit=10&offset=10")
+    assert page2.status_code == 200
+    body2 = page2.data
+    assert len(body2["results"]) == 2
+    assert body2["next"] is None
